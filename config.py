@@ -10,6 +10,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = "gpt-4o-mini"
 OPENAI_TEMPERATURE = 0
 
+# --- Serper.dev (Google Shopping API) ---
+SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
+
 # --- Crawler ---
 MAX_PRODUCTS_PER_SOURCE = 5
 CRAWL_TIMEOUT_SECONDS = 35

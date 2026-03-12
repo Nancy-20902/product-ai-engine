@@ -1,6 +1,7 @@
 """Main crawler orchestrator — manages the 3-layer fallback strategy."""
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import quote_plus
 from typing import Optional
 
@@ -9,6 +10,7 @@ from crawler.crawl4ai_layer import run_crawl4ai
 from crawler.bs4_layer import extract_with_bs4, extract_multiple_from_search, parse_search_html
 from crawler.playwright_layer import extract_with_playwright_stealth
 from crawler.extractor import extract_product
+from crawler.serper_layer import search_google_shopping
 # KB source caching removed — always live fetch
 from config import MAX_PRODUCTS_PER_SOURCE, CRAWL_TIMEOUT_SECONDS
 
@@ -45,27 +47,38 @@ def crawl_for_products(
     all_products: list[Product] = []
     reports: list[CrawlResult] = []
 
-    for source_name, url_list in urls.items():
-        source_products = _crawl_source(
-            source_name, url_list, all_products
-        )
-        success = len(source_products) > 0
+    # Crawl all sources in parallel
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {}
+        for source_name, url_list in urls.items():
+            futures[executor.submit(
+                _crawl_source, source_name, url_list, []
+            )] = source_name
 
-        all_products.extend(source_products)
-        reports.append(
-            CrawlResult(
-                source=source_name,
-                success=success,
-                products_found=len(source_products),
-                error=None if success else f"No results from {source_name}",
+        for future in as_completed(futures):
+            source_name = futures[future]
+            try:
+                source_products = future.result()
+            except Exception as e:
+                logger.error("Source %s crashed: %s", source_name, e)
+                source_products = []
+
+            success = len(source_products) > 0
+            all_products.extend(source_products)
+            reports.append(
+                CrawlResult(
+                    source=source_name,
+                    success=success,
+                    products_found=len(source_products),
+                    error=None if success else f"No results from {source_name}",
+                )
             )
-        )
 
-        logger.info(
-            "Source %s: %d products found",
-            source_name,
-            len(source_products),
-        )
+            logger.info(
+                "Source %s: %d products found",
+                source_name,
+                len(source_products),
+            )
 
     return all_products, reports
 
@@ -78,21 +91,42 @@ def _crawl_multi_brand(
     reports: list[CrawlResult] = []
     per_brand_limit = max(3, MAX_PRODUCTS_PER_SOURCE // len(brands) + 1)
 
-    for brand_name in brands:
-        # Build a brand-specific search term
-        brand_query = query.model_copy()
-        brand_query.brand = brand_name
-        search_term = _build_search_term(brand_query)
+    # Crawl all brand+source combos in parallel
+    with ThreadPoolExecutor(max_workers=len(brands) * 2 + 1) as executor:
+        futures = {}
+
+        for brand_name in brands:
+            brand_query = query.model_copy()
+            brand_query.brand = brand_name
+            search_term = _build_search_term(brand_query)
+            encoded = quote_plus(search_term)
+
+            for source_name, url in [
+                ("Amazon", f"https://www.amazon.in/s?k={encoded}"),
+                ("Flipkart", f"https://www.flipkart.com/search?q={encoded}"),
+            ]:
+                label = f"{source_name} ({brand_name})"
+                futures[executor.submit(
+                    _crawl_url, url, source_name
+                )] = (label, per_brand_limit)
+
+        # Google Shopping via Serper in parallel too
+        search_term = _build_search_term(query)
         encoded = quote_plus(search_term)
+        gs_url = f"https://www.google.com/search?q={encoded}+buy+online&tbm=shop"
+        futures[executor.submit(
+            _crawl_source, "Google Shopping", [gs_url], []
+        )] = ("Google Shopping", MAX_PRODUCTS_PER_SOURCE)
 
-        for source_name, url in [
-            ("Amazon", f"https://www.amazon.in/s?k={encoded}"),
-            ("Flipkart", f"https://www.flipkart.com/search?q={encoded}"),
-        ]:
-            label = f"{source_name} ({brand_name})"
-            products = _crawl_url(url, source_name)
-            products = products[:per_brand_limit]
+        for future in as_completed(futures):
+            label, limit = futures[future]
+            try:
+                products = future.result()
+            except Exception as e:
+                logger.error("Source %s crashed: %s", label, e)
+                products = []
 
+            products = products[:limit]
             all_products.extend(products)
             reports.append(
                 CrawlResult(
@@ -103,22 +137,6 @@ def _crawl_multi_brand(
             )
             logger.info("Source %s: %d products", label, len(products))
 
-    # Also try Google Shopping with combined query as fallback
-    search_term = _build_search_term(query)
-    encoded = quote_plus(search_term)
-    gs_url = f"https://www.google.com/search?q={encoded}+buy+online&tbm=shop"
-    gs_products = _crawl_source(
-        "Google Shopping", [gs_url], all_products
-    )
-    all_products.extend(gs_products)
-    reports.append(
-        CrawlResult(
-            source="Google Shopping",
-            success=len(gs_products) > 0,
-            products_found=len(gs_products),
-        )
-    )
-
     return all_products, reports
 
 
@@ -128,34 +146,68 @@ def _crawl_source(
 ) -> list[Product]:
     """
     Crawl a single source (all its URLs). For Google Shopping,
-    skip products that duplicate names already found from other sources.
+    uses Serper.dev API instead of scraping.
     """
+    # Route Google Shopping through Serper API
+    if source_name == "Google Shopping":
+        return _crawl_google_via_serper(url_list[0], existing_products)
+
     source_products = []
-    is_google = source_name == "Google Shopping"
-
-    # Build set of existing product names for dedup (Google only)
-    existing_names = set()
-    if is_google:
-        for p in existing_products:
-            existing_names.add(p.product_name.lower().strip())
-
     for url in url_list:
         if len(source_products) >= MAX_PRODUCTS_PER_SOURCE:
             break
-
         products = _crawl_url(url, source_name)
         if products:
-            if is_google:
-                # Filter out dupes from Amazon/Flipkart
-                for p in products:
-                    pn = p.product_name.lower().strip()
-                    if pn not in existing_names:
-                        source_products.append(p)
-                        existing_names.add(pn)
-            else:
-                source_products.extend(products)
+            source_products.extend(products)
 
     return source_products[:MAX_PRODUCTS_PER_SOURCE]
+
+
+def _crawl_google_via_serper(
+    url: str, existing_products: list[Product]
+) -> list[Product]:
+    """Use Serper API instead of scraping Google Shopping."""
+    from urllib.parse import urlparse, parse_qs, unquote_plus
+
+    # Extract the search term from the URL we already built
+    parsed_url = urlparse(url)
+    query_params = parse_qs(parsed_url.query)
+    search_term = unquote_plus(query_params.get("q", ["storage container"])[0])
+    search_term = search_term.replace("+buy+online", "").replace(" buy online", "").strip()
+
+    raw_list = search_google_shopping(search_term, max_results=MAX_PRODUCTS_PER_SOURCE)
+
+    # Deduplicate against existing Amazon/Flipkart results
+    existing_names = {p.product_name.lower().strip() for p in existing_products}
+
+    products = []
+    for raw in raw_list:
+        seller_site = raw.get("seller_site", "Google Shopping")
+        seller_lower = seller_site.lower().rstrip(".")
+
+        # Skip if seller is Amazon/Flipkart — we already crawl those directly
+        # and prefer their richer data (ratings, reviews, etc.)
+        if "amazon" in seller_lower or "flipkart" in seller_lower:
+            continue
+
+        # Other sellers: show as "Myntra (via Google Shopping)"
+        source_label = f"{seller_site} (via Google Shopping)"
+
+        product = extract_product(raw, source_label)
+        if product:
+            # Skip products where brand couldn't be identified
+            if product.brand == "Unknown":
+                logger.debug(
+                    "Skipping Serper product with unknown brand: %s",
+                    product.product_name[:50],
+                )
+                continue
+            pn = product.product_name.lower().strip()
+            if pn not in existing_names:
+                products.append(product)
+                existing_names.add(pn)
+
+    return products[:MAX_PRODUCTS_PER_SOURCE]
 
 
 def _crawl_url(
