@@ -52,7 +52,7 @@ def _score_all(
 
     # Compute normalization bounds
     prices = [p.price_inr for p in products]
-    reviews = [p.review_count for p in products]
+    reviews = [p.review_count for p in products if p.review_count is not None]
     min_price = min(prices)
     max_price = max(prices)
     max_reviews = max(reviews) if reviews else 1
@@ -80,10 +80,14 @@ def _score_all(
         score += WEIGHT_PRICE * price_score
 
         # --- Rating Score (higher is better) ---
-        rating_score = product.rating / 5.0
-        if product.rating >= 4.5:
-            reasons.append(f"Excellent rating ({product.rating})")
-        score += WEIGHT_RATING * rating_score
+        if product.rating is not None:
+            rating_score = product.rating / 5.0
+            if product.rating >= 4.5:
+                reasons.append(f"Excellent rating ({product.rating})")
+            score += WEIGHT_RATING * rating_score
+        else:
+            # Unknown rating — redistribute weight to other factors
+            score += WEIGHT_RATING * 0.5
 
         # --- Feature Match Score ---
         feature_score = _compute_feature_match(product, query)
@@ -92,14 +96,18 @@ def _score_all(
         score += WEIGHT_FEATURE_MATCH * feature_score
 
         # --- Review Count Score (social proof) ---
-        review_score = min(
-            1.0, product.review_count / max(max_reviews, 1)
-        )
-        if product.review_count > 1000:
-            reasons.append(
-                f"Popular ({product.review_count} reviews)"
+        if product.review_count is not None:
+            review_score = min(
+                1.0, product.review_count / max(max_reviews, 1)
             )
-        score += WEIGHT_REVIEW_COUNT * review_score
+            if product.review_count > 1000:
+                reasons.append(
+                    f"Popular ({product.review_count} reviews)"
+                )
+            score += WEIGHT_REVIEW_COUNT * review_score
+        else:
+            # Unknown review count — redistribute weight
+            score += WEIGHT_REVIEW_COUNT * 0.5
 
         # --- Brand Reputation Score ---
         brand_score = KNOWN_BRANDS.get(
@@ -216,10 +224,10 @@ def _assign_labels(recommendations: list[RecommendationResult]) -> None:
         recommendations, key=lambda r: r.product.price_inr
     )
     highest_rated = max(
-        recommendations, key=lambda r: r.product.rating
+        recommendations, key=lambda r: r.product.rating if r.product.rating is not None else -1
     )
     most_reviewed = max(
-        recommendations, key=lambda r: r.product.review_count
+        recommendations, key=lambda r: r.product.review_count if r.product.review_count is not None else -1
     )
 
     # Assign labels (don't overwrite Best Overall)
@@ -236,6 +244,7 @@ def _assign_labels(recommendations: list[RecommendationResult]) -> None:
         and not most_reviewed.label
     ):
         most_reviewed.label = "Most Popular"
+
 
 
 def _add_llm_explanations(
@@ -256,7 +265,8 @@ def _add_llm_explanations(
         micro_str = "Yes" if p.microwave_safe else "N/A"
         products_lines.append(
             f"{i}. {p.product_name} | Brand: {p.brand} | "
-            f"Price: Rs{p.price_inr:.0f} | Rating: {p.rating}/5 | "
+            f"Price: Rs{p.price_inr:.0f} | Rating: {p.rating}/5 | " if p.rating is not None else
+            f"Price: Rs{p.price_inr:.0f} | Rating: N/A | "
             f"Material: {p.material or 'N/A'} | "
             f"Capacity: {p.capacity_ml or 'N/A'}ml | "
             f"Lid: {lid_str} | Microwave: {micro_str} | "

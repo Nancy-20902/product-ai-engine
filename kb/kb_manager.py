@@ -62,7 +62,7 @@ def search_products(query: ParsedQuery) -> list[Product]:
             results.append(product)
 
     # Sort by rating descending
-    results.sort(key=lambda p: p.rating, reverse=True)
+    results.sort(key=lambda p: p.rating if p.rating is not None else -1, reverse=True)
     logger.info("KB search found %d matching products.", len(results))
     return results
 
@@ -181,8 +181,8 @@ def add_products(new_products: list[Product]) -> None:
             if product.price_inr < old.price_inr:
                 old.price_inr = product.price_inr
                 changed = True
-            # Update rating if higher
-            if product.rating > old.rating:
+            # Update rating if higher (skip if new is unknown)
+            if product.rating is not None and (old.rating is None or product.rating > old.rating):
                 old.rating = product.rating
                 changed = True
             # Update booleans only if new is True (confirmed)

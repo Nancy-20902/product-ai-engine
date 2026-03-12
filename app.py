@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # ── Page Config ──
 st.set_page_config(
     page_title="Smart Kitchen Storage Finder",
-    page_icon="🍱",
+    page_icon="",
     layout="wide",
 )
 
@@ -241,13 +241,14 @@ if user_query:
 
     for i, rec in enumerate(recommendations[:5]):
         p = rec.product
-        label = rec.label or f"#{i + 1}"
+        rank = f"#{i + 1}"
+        display_label = f"{rank} — {rec.label}" if i == 0 and rec.label else rank
 
         with st.container():
             col1, col2, col3 = st.columns([1, 2, 1])
 
             with col1:
-                st.markdown(f"### {label}")
+                st.markdown(f"### {display_label}")
                 st.markdown(f"**Score: {rec.score}/100**")
 
             with col2:
@@ -269,7 +270,7 @@ if user_query:
 
             with col3:
                 st.markdown(f"### Rs{p.price_inr:.0f}")
-                st.markdown(f"Rating: {p.rating}/5")
+                st.markdown(f"Rating: {p.rating}/5" if p.rating is not None else "Rating: N/A")
                 if p.sources:
                     best = min(p.sources, key=lambda s: s.price)
                     st.markdown(
@@ -296,13 +297,13 @@ if user_query:
             if url and url.startswith("http"):
                 link = f"[View Product]({url})"
             else:
-                link = url or ""
+                link = "N/A"
             price_data.append(
                 {
                     "Product": p.product_name[:40],
                     "Brand": p.brand,
                     "Site": source.site,
-                    "Price (Rs)": source.price,
+                    "Price (Rs)": int(source.price),
                     "Link": link,
                 }
             )

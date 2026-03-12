@@ -56,8 +56,8 @@ class Product(BaseModel):
     bpa_free: bool = False
     features: list[str] = Field(default_factory=list)
     price_inr: float
-    rating: float = Field(default=0.0, ge=0.0, le=5.0)
-    review_count: int = 0
+    rating: Optional[float] = Field(default=None, ge=0.0, le=5.0)
+    review_count: Optional[int] = None
     sources: list[ProductSource] = Field(default_factory=list)
     last_crawled: str = ""
     image_url: Optional[str] = None

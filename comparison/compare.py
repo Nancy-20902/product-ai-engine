@@ -13,9 +13,6 @@ def build_comparison_table(products: list[Product]) -> pd.DataFrame:
     """Build a side-by-side comparison DataFrame."""
     rows = []
     for p in products:
-        best_price = min(
-            (s.price for s in p.sources), default=p.price_inr
-        )
         sites = ", ".join(s.site for s in p.sources)
         rows.append(
             {
@@ -26,12 +23,11 @@ def build_comparison_table(products: list[Product]) -> pd.DataFrame:
                     f"{p.capacity_ml}ml" if p.capacity_ml else "N/A"
                 ),
                 "Price": f"Rs{p.price_inr:.0f}",
-                "Best Price": f"Rs{best_price:.0f}",
                 "Lid": _feature_val(p.lid),
                 "Microwave": _feature_val(p.microwave_safe),
                 "Dishwasher": _feature_val(p.dishwasher_safe),
                 "BPA Free": _feature_val(p.bpa_free),
-                "Rating": f"{p.rating}",
+                "Rating": f"{p.rating}/5" if p.rating is not None else "N/A",
                 "Available On": sites,
             }
         )

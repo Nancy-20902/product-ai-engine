@@ -115,8 +115,8 @@ def _from_parsed_data(
         bpa_free=bpa_free,
         features=features,
         price_inr=price,
-        rating=min(rating or 0, 5.0),
-        review_count=review_count or 0,
+        rating=min(rating, 5.0) if rating is not None else None,
+        review_count=review_count,
         sources=[
             ProductSource(site=source_site, price=price, url=url)
         ],
