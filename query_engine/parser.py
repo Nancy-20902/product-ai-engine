@@ -62,7 +62,7 @@ def _post_validate(p: ParsedQuery, query: str = "") -> ParsedQuery:
     # The LLM sometimes applies a ±20% range for "under X" — override that.
     _UNDER_RE = re.compile(
         r"\b(?:under|below|less\s+than|max|upto|up\s+to|within|budget|not\s+more\s+than)"
-        r"\s*(?:rs\.?\s*)?([\d,]+)",
+        r"\s*(?:(?:rs\.?|rupees?|inr|₹)\s*)?([\d,]+)",
         re.IGNORECASE,
     )
     m = _UNDER_RE.search(query)
@@ -74,7 +74,7 @@ def _post_validate(p: ParsedQuery, query: str = "") -> ParsedQuery:
     # Hard-correct price floor for explicit "above/over/min X" phrases.
     _OVER_RE = re.compile(
         r"\b(?:above|over|more\s+than|starting\s+from|min(?:imum)?)\s*"
-        r"(?:rs\.?\s*)?([\d,]+)",
+        r"(?:(?:rs\.?|rupees?|inr|₹)\s*)?([\d,]+)",
         re.IGNORECASE,
     )
     m2 = _OVER_RE.search(query)

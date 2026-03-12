@@ -78,9 +78,9 @@ def _merge(existing: Product, new: Product) -> Product:
     existing.price_inr = min(existing.price_inr, new.price_inr)
 
     # Keep higher rating and review count
-    if new.rating > existing.rating:
+    if new.rating is not None and (existing.rating is None or new.rating > existing.rating):
         existing.rating = new.rating
-    if new.review_count > existing.review_count:
+    if new.review_count is not None and (existing.review_count is None or new.review_count > existing.review_count):
         existing.review_count = new.review_count
 
     # Merge features (union)
