@@ -1,9 +1,0 @@
-.env
-venv-prod/
-__pycache__/
-*.pyc
-*.pyo
-inspect_*.py
-test_parsers.py
-.pytest_cache/
-README.md
